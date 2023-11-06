@@ -81,6 +81,15 @@ def random_fim(text: str) -> [str,str,str]:
     real_middle = '\n'.join(text_lines[start_line:end_line])
     return prefix_text, suffix_text, real_middle
 
+def new_base(filename: str) -> str:
+    # filename and extension
+    base = os.path.basename(filename)
+    base, ext = os.path.splitext(base)
+    # Get the first occurrence (if any) of ".base_"
+    first = base.find('.base_')
+    base = base[:first]
+    return base, ext
+
 async def generate_variant(i, generators, model, args):
     # Pick a random generator
     generator = random.choice(generators)
@@ -125,8 +134,7 @@ async def generate_variant(i, generators, model, args):
     olines = orig.count('\n')
     gen_lines = text.count('\n')
     # filename and extension
-    base = os.path.basename(args.file)
-    base, ext = os.path.splitext(base)
+    base, ext = new_base(args.file)
     out_file = f'var_{i:04}.{generator}.pre_{plines:03}-orig_{olines:03}-gen_{gen_lines:03}-suf_{slines:03}-fin_{finish_reason}.base_{base}{ext}'
     with open(os.path.join(args.output,out_file), 'w') as f:
         f.write(prefix + text + suffix)

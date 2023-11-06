@@ -47,3 +47,6 @@ done
 # Collect the coverage of the generators
 echo "Collecting coverage of the generators"
 python getcov.py -O runs/${next_gen}/logs/gengif_cov.json /fastdata/randomgifs/${next_gen}/
+
+# Print the coverage of the new generation
+python analyze_cov.py runs/${next_gen}/logs/gengif_cov.json | sort -n | tail -n 10

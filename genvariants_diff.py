@@ -34,6 +34,15 @@ def random_diff(text: str, msg: str) -> str:
     """Generate a prompt for StarCoder's diff format"""
     return f'<commit_before>{text}<commit_msg>{msg}<commit_after>'
 
+def new_base(filename: str) -> str:
+    # filename and extension
+    base = os.path.basename(filename)
+    base, ext = os.path.splitext(base)
+    # Get the first occurrence (if any) of ".base_"
+    first = base.find('.base_')
+    base = base[:first]
+    return base, ext
+
 def main():
     global ENDPOINT
     parser = argparse.ArgumentParser(
@@ -80,8 +89,7 @@ def main():
         # Count lines
         gen_lines = text.count('\n')
         # filename and extension
-        base = os.path.basename(args.file)
-        base, ext = os.path.splitext(base)
+        base, ext = new_base(args.file)
         out_file = f'var_{i:04}.diffmode.gen_{gen_lines:03}-fin_{finish_reason}.base_{base}{ext}'
         with open(os.path.join(args.output,out_file), 'w') as f:
             f.write(text)
