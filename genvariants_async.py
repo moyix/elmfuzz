@@ -7,7 +7,7 @@ import aiohttp
 import asyncio
 import requests
 
-ENDPOINT = 'http://127.0.0.1:8080'
+ENDPOINT = 'http://127.0.0.1:8192'
 
 def model_info():
     """Get information about the model."""
@@ -16,8 +16,9 @@ def model_info():
 async def generate_completion(
         prompt,
         temperature=0.2,
-        max_new_tokens=512,
+        max_new_tokens=1200,
         repetition_penalty=1.1,
+        stop=None,
 ):
     """Generate a completion of the prompt."""
     data = {
@@ -27,9 +28,11 @@ async def generate_completion(
             'max_new_tokens': max_new_tokens,
             'do_sample': True,
             'repetition_penalty': repetition_penalty,
-            'stop': ['\nif', '\nclass', '\nfor', '\nwhile'],
+             "details": True, # So we get the finish_reason
         },
     }
+    if stop is not None:
+        data['parameters']['stop'] = stop
     async with aiohttp.ClientSession() as session:
         async with session.post(f'{ENDPOINT}/generate', json=data) as resp:
             return await resp.json()
@@ -78,29 +81,53 @@ def random_fim(text: str) -> [str,str,str]:
     real_middle = '\n'.join(text_lines[start_line:end_line])
     return prefix_text, suffix_text, real_middle
 
-async def generate_variant(i, generators, args):
+async def generate_variant(i, generators, model, args):
     # Pick a random generator
     generator = random.choice(generators)
-    if generator == 'fim':
+    if generator == 'infilled':
         prefix, suffix, orig = random_fim(open(args.file).read())
         prompt = infilling_prompt(prefix, suffix)
+        stop = []
     else:
         prefix, orig = random_completion(open(args.file).read())
         suffix = ''
         prompt = prefix
-    res = await generate_completion(prompt)
+        stop = ['\nif', '\nclass', '\nfor', '\nwhile']
+    res = await generate_completion(
+        prompt,
+        temperature=args.temperature,
+        max_new_tokens=args.max_new_tokens,
+        repetition_penalty=args.repetition_penalty,
+        stop=stop,
+    )
     if 'generated_text' not in res:
         print(f"WARNING: no generated text in response: {res}")
         return None
     text = res['generated_text']
+    if 'codellama' in model:
+        # CodeLlama tokenizer decoding seems slightly broken in TGI,
+        # so we need to remove the ' <EOT>' token manually, and trim the
+        # stop sequences.
+        text = text.replace(' <EOT>', '')
+        for stop_seq in stop:
+            if text.endswith(stop_seq):
+                text = text[:-len(stop_seq)]
+    # one of [length, eos_token, stop_sequence]
+    finish_reason = res['details']['finish_reason']
+    finish_reason = {
+        'length': 'len',
+        'eos_token': 'eos',
+        'stop_sequence': 'stp',
+    }[finish_reason]
     # Count lines
     plines = prefix.count('\n')
     slines = suffix.count('\n')
     olines = orig.count('\n')
     gen_lines = text.count('\n')
     # filename and extension
-    base, ext = os.path.splitext(args.file)
-    out_file = f'{base}.var_{i:04}.{generator}.pre_{plines}-orig_{olines}-gen_{gen_lines}-suf_{slines}{ext}'
+    base = os.path.basename(args.file)
+    base, ext = os.path.splitext(base)
+    out_file = f'var_{i:04}.{generator}.pre_{plines:03}-orig_{olines:03}-gen_{gen_lines:03}-suf_{slines:03}-fin_{finish_reason}.base_{base}{ext}'
     with open(os.path.join(args.output,out_file), 'w') as f:
         f.write(prefix + text + suffix)
     print(f'Wrote {out_file} to {args.output}')
@@ -143,12 +170,12 @@ async def main():
 
     generators = []
     if not args.no_completion:
-        generators += ['completion']
+        generators += ['complete']
     if not args.no_fim:
-        generators += ['fim']
+        generators += ['infilled']
 
     for i in range(args.num):
-        await generate_variant(i, generators, args)
+        await generate_variant(i, generators, model, args)
 
 if __name__ == '__main__':
     asyncio.run(main())

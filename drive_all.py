@@ -7,6 +7,7 @@ import glob
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -31,20 +32,6 @@ logger = setup_custom_logger('root')
 from tqdm import tqdm
 from driver import ExceptionInfo, Result, ResultInfo, GenResult
 
-def remove_argument(parser, arg):
-    for action in parser._actions:
-        opts = action.option_strings
-        if (opts and opts[0] == arg) or action.dest == arg:
-            parser._remove_action(action)
-            break
-
-    for action in parser._action_groups:
-        for group_action in action._group_actions:
-            opts = group_action.option_strings
-            if (opts and opts[0] == arg) or group_action.dest == arg:
-                action._group_actions.remove(group_action)
-                return
-
 # Global color cycle with ANSI colors
 COLOR_GREEN = '\033[92m'
 COLOR_RED = '\033[91m'
@@ -65,7 +52,6 @@ COLOR_CYCLE = [
     COLOR_WHITE,
     COLOR_GREY,
 ]
-
 
 def draw_success_rate(stats, preferred_colors=None):
     BOX = '▓'
@@ -119,15 +105,14 @@ def draw_success_rate(stats, preferred_colors=None):
 
     return drawn_bar + "  " + legend
 
+gentype_re = re.compile(r'var_\d{4}\.(?P<gentype>[a-z]+)\.')
 def get_gentype(module_path):
-    if 'infilled' in module_path:
-        return 'infilled'
-    elif 'complete' in module_path:
-        return 'complete'
-    elif 'diffmode' in module_path:
-        return 'diffmode'
-    else:
-        return None
+    basename = os.path.basename(module_path)
+    # E.g.: var_0000.diffmode.gen_000-fin_len.base_starcoder_gengif.var_0090.complete.pre_042-org_004-gen_006-suf_000-fin_eos.py
+    #  => diffmode
+    # E.g.: var_0000.complete.pre_042-org_004-gen_006-suf_000-fin_eos.py
+    #  => complete
+    return gentype_re.search(basename).group('gentype')
 
 def generate_stats(logfile):
     color_preferences = {
