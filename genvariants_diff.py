@@ -40,8 +40,11 @@ def new_base(filename: str) -> str:
     base, ext = os.path.splitext(base)
     # Get the first occurrence (if any) of ".base_"
     first = base.find('.base_')
-    base = base[:first]
-    return base, ext
+    if first == -1:
+        return base, ext
+    else:
+        base = base[:first]
+        return base, ext
 
 def main():
     global ENDPOINT

@@ -4,12 +4,10 @@ import json
 import random
 import argparse
 import os
-from tqdm.asyncio import tqdm
-import aiohttp
-import asyncio
-import aiofiles
+from tqdm import tqdm
 import requests
 import itertools
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 ENDPOINT = 'http://127.0.0.1:8192'
 
@@ -17,7 +15,7 @@ def model_info():
     """Get information about the model."""
     return requests.get(f'{ENDPOINT}/info').json()
 
-async def generate_completion(
+def generate_completion(
         prompt,
         temperature=0.2,
         max_new_tokens=1200,
@@ -37,9 +35,7 @@ async def generate_completion(
     }
     if stop is not None:
         data['parameters']['stop'] = stop
-    async with aiohttp.ClientSession() as session:
-        async with session.post(f'{ENDPOINT}/generate', json=data) as resp:
-            return await resp.json()
+    return requests.post(f'{ENDPOINT}/generate', json=data).json()
 
 def infilling_prompt_llama(
     pre: str,
@@ -108,7 +104,7 @@ def new_base(filename: str) -> str:
         base = base[:first]
         return base, ext
 
-async def generate_variant(i, generators, model, filename, args):
+def generate_variant(i, generators, model, filename, args):
     # Pick a random generator
     generator = random.choice(generators)
     if generator == 'infilled':
@@ -130,7 +126,7 @@ async def generate_variant(i, generators, model, filename, args):
         suffix = ''
         prompt = prefix
         stop = ['\nif', '\nclass', '\nfor', '\nwhile']
-    res = await generate_completion(
+    res = generate_completion(
         prompt,
         temperature=args.temperature,
         max_new_tokens=args.max_new_tokens,
@@ -176,21 +172,19 @@ async def generate_variant(i, generators, model, filename, args):
         'suffix_lines': slines,
         'finish_reason': finish_reason,
         'base': [base] + ([base2] if generator == 'lmsplice' else []),
+        'response': res,
     }
     out_file = f'var_{i:04}.{generator}{ext}'
-    async with aiofiles.open(os.path.join(args.output,out_file), 'w') as f:
-        # await f.write(f'# =========== {base} ===========\n')
-        await f.write(prefix)
-        # await f.write(f'\n# =========== generated ===========\n')
-        await f.write(text)
-        # await f.write(f'\n# =========== {base2} ===========\n')
-        await f.write(suffix)
+    with open(os.path.join(args.output,out_file), 'w') as f:
+        f.write(prefix)
+        f.write(text)
+        f.write(suffix)
     # Write metadata to logdir
-    async with aiofiles.open(os.path.join(args.logdir, out_file + '.json'), 'w') as f:
-        await f.write(json.dumps(meta))
+    with open(os.path.join(args.logdir, out_file + '.json'), 'w') as f:
+        f.write(json.dumps(meta))
     # tqdm.write(f'Wrote {out_file} to {args.output}')
 
-async def main():
+def main():
     global ENDPOINT
     global infilling_prompt
     parser = argparse.ArgumentParser(
@@ -245,8 +239,16 @@ async def main():
         for filename in args.files:
             worklist.append((i, filename))
             i += 1
-    async for i, filename in tqdm(worklist, desc='Generating', unit='variant'):
-        await generate_variant(i, generators, model, filename, args)
+    pbar = tqdm(total=len(worklist), desc='Generating', unit='variant')
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = []
+        for i, filename in worklist:
+            future = executor.submit(generate_variant, i, generators, model, filename, args)
+            future.add_done_callback(lambda _: pbar.update())
+            futures.append(future)
+        for future in as_completed(futures):
+            future.result()
+    pbar.close()
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    main()

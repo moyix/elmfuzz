@@ -108,9 +108,9 @@ def draw_success_rate(stats, preferred_colors=None):
 gentype_re = re.compile(r'var_\d{4}\.(?P<gentype>[a-z]+)\.')
 def get_gentype(module_path):
     basename = os.path.basename(module_path)
-    # E.g.: var_0000.diffmode.gen_000-fin_len.base_starcoder_gengif.var_0090.complete.pre_042-org_004-gen_006-suf_000-fin_eos.py
+    # E.g.: var_0000.diffmode.py
     #  => diffmode
-    # E.g.: var_0000.complete.pre_042-org_004-gen_006-suf_000-fin_eos.py
+    # E.g.: var_0000.complete.py
     #  => complete
     return gentype_re.search(basename).group('gentype')
 
@@ -465,7 +465,8 @@ def main():
 
     # Print the stats out to stderr now that we're done
     generate_stats(args.logfile)
-    generate_filestats(args.logfile)
+    # Skip file stats for now, takes too long
+    # generate_filestats(args.logfile)
 
 if __name__ == '__main__':
     main()
