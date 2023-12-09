@@ -165,6 +165,7 @@ def generate_variant(i, generators, model, filename, args):
         base2 = base
     meta = {
         'model': model,
+        'prompt': prompt,
         'generator': generator,
         'prompt_lines': plines,
         'orig_lines': olines,
@@ -175,7 +176,8 @@ def generate_variant(i, generators, model, filename, args):
         'response': res,
     }
     out_file = f'var_{i:04}.{generator}{ext}'
-    with open(os.path.join(args.output,out_file), 'w') as f:
+    out_path = os.path.join(args.output,out_file)
+    with open(out_path, 'w') as f:
         f.write(prefix)
         f.write(text)
         f.write(suffix)
@@ -183,6 +185,7 @@ def generate_variant(i, generators, model, filename, args):
     with open(os.path.join(args.logdir, out_file + '.json'), 'w') as f:
         f.write(json.dumps(meta))
     # tqdm.write(f'Wrote {out_file} to {args.output}')
+    return out_path
 
 def main():
     global ENDPOINT
@@ -199,6 +202,7 @@ def main():
     parser.add_argument('-L', '--logdir', type=str, default='logs')
     parser.add_argument('-s', '--start-line', type=int, default=0,
                         help='When making random cuts, always start at this line')
+    parser.add_argument('-j', '--jobs', type=int, default=16)
     parser.add_argument('--endpoint', type=str, default=ENDPOINT)
     # Generation params
     parser.add_argument('-t', '--temperature', type=float, default=0.2)
@@ -239,16 +243,16 @@ def main():
         for filename in args.files:
             worklist.append((i, filename))
             i += 1
-    pbar = tqdm(total=len(worklist), desc='Generating', unit='variant')
-    with ThreadPoolExecutor(max_workers=8) as executor:
+    # pbar = tqdm(total=len(worklist), desc='Generating', unit='variant')
+    with ThreadPoolExecutor(max_workers=args.jobs) as executor:
         futures = []
         for i, filename in worklist:
             future = executor.submit(generate_variant, i, generators, model, filename, args)
-            future.add_done_callback(lambda _: pbar.update())
+            # future.add_done_callback(lambda _: pbar.update())
             futures.append(future)
         for future in as_completed(futures):
-            future.result()
-    pbar.close()
+            print(future.result(), flush=True)
+    # pbar.close()
 
 if __name__ == '__main__':
     main()

@@ -311,8 +311,10 @@ def generate_docker(module_path, worker_dir, args):
     logfile_name = f'logfile.json'
     docker_logfile_name = os.path.join("/data", logfile_name)
     # Run the module in the docker container
+    container_name = f'elmfuzz_{os.path.basename(worker_dir)}'
     cmd = [
         'docker', 'run', '--rm',
+        '--name', container_name,
         '-v', f'{worker_dir}:/data',
         'elmfuzz:latest',
         'python', 'driver.py',
@@ -328,7 +330,12 @@ def generate_docker(module_path, worker_dir, args):
     logger.debug(f"Running: {' '.join(cmd)}")
     result = None
     try:
-        subprocess.run(cmd, check=True, text=True, capture_output=True)
+        # Timeout: 30 minutes
+        timeout = 30 * 60
+        subprocess.run(cmd, check=True, text=True, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        # Stop the container
+        subprocess.run(['docker', 'stop', container_name])
     except subprocess.CalledProcessError as e:
         result = Result(
             error = ExceptionInfo.from_exception(e, module_path),
@@ -344,11 +351,28 @@ def generate_docker(module_path, worker_dir, args):
             args = args,
         )
     # Remove the module from the output directory
-    os.remove(copied_module_name)
+    try:
+        os.remove(copied_module_name)
+    except FileNotFoundError:
+        pass
     gen_results = []
-    with open(os.path.join(worker_dir, logfile_name)) as f:
-        for line in f:
-            gen_results.append(json.loads(line))
+    try:
+        # Read the results from the logfile
+        with open(os.path.join(worker_dir, logfile_name)) as f:
+            for line in f:
+                gen_results.append(json.loads(line))
+        # remove the logfile
+        os.remove(os.path.join(worker_dir, logfile_name))
+    except FileNotFoundError:
+        # The logfile wasn't created, so something went wrong
+        result = Result(
+            error = None,
+            data = None,
+            module_path = module_path,
+            result_type = GenResult.UnknownErr,
+            function_name = args.function_name,
+            args = args,
+        )
     if len(gen_results) == 1 and gen_results[0]['result_type'] == 'ImportError':
         return gen_results
 
@@ -367,7 +391,6 @@ def generate_docker(module_path, worker_dir, args):
             gen_results.append(json.loads(result.json()))
     return gen_results
 
-    # Something went wrong
 def main():
     parser = argparse.ArgumentParser('drive_all.py',
         'Run a function in each module')
@@ -376,8 +399,8 @@ def main():
         help='The function to run in each module',
     )
     parser.add_argument(
-        'module_paths', type=str, nargs='+',
-        help='The modules to run the function in',
+        'module_count', type=int,
+        help='Number of modules expected (names on stdin)',
     )
     # These are passed to every module
     parser.add_argument(
@@ -423,10 +446,11 @@ def main():
     print(json.dumps({'error': None, 'data': {'args': args.__dict__}}), file=output_log)
     # Call generate_all on each module in args.module_paths in parallel
     with ProcessPoolExecutor(max_workers=args.jobs) as executor:
-        progress = tqdm(total=len(args.module_paths),
+        progress = tqdm(total=args.module_count,
                         desc="Generating", unit="mod")
         futures_to_paths = OrderedDict()
-        for module_path in args.module_paths:
+        for module_path in sys.stdin:
+            module_path = module_path.strip()
             # Make an output directory for this module's outputs
             module_base = os.path.splitext(os.path.basename(module_path))[0]
             worker_dir = os.path.join(args.output_dir, module_base)
