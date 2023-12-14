@@ -134,7 +134,7 @@ def generate_stats(logfile):
                 print(f"Error: {line}", file=sys.stderr)
             if result['result_type'] == 'ImportError':
                 # Mark the batch as an error
-                running_stats[get_gentype(module_path)]['ImportError'] += original_args['num_iterations']
+                running_stats[get_gentype(module_path)]['ImportError'] += original_args['driver']['num_iterations']
             else:
                 running_stats[get_gentype(module_path)][result['result_type']] += 1
     running_stats = { k: dict(v) for k, v in running_stats.items() }
@@ -184,7 +184,7 @@ def generate_filestats(logfile):
     file_stats = defaultdict(lambda: defaultdict(new_filestats))
     with open(logfile) as f:
         original_args = json.loads(f.readline())['data']['args']
-        ext = original_args['output_suffix']
+        ext = original_args['driver']['output_suffix']
         output_dir = original_args['output_dir']
         for line in f:
             result = json.loads(line)
@@ -291,7 +291,7 @@ def generate_filestats(logfile):
 
 class filestats_action(argparse.Action):
     def __init__(self, option_strings, dest, **kwargs):
-        return super().__init__(option_strings, dest, nargs=0, default=argparse.SUPPRESS, **kwargs)
+        return super().__init__(option_strings, dest, nargs=0, **kwargs)
 
     def __call__(self, parser, namespace, values, option_string, **kwargs):
         if namespace.logfile is None:
@@ -318,14 +318,14 @@ def generate_docker(module_path, worker_dir, args):
         '-v', f'{worker_dir}:/data',
         'elmfuzz:latest',
         'python', 'driver.py',
-        '-n', str(args.num_iterations),
+        '-n', str(args.driver.num_iterations),
         '-o', docker_outdir,
         '-L', docker_logfile_name,
-        '-t', str(args.timeout),
-        '-S', str(args.size_limit),
-        '-M', str(args.max_mem),
-        '-s', args.output_suffix,
-        docker_module_name, args.function_name,
+        '-t', str(args.driver.timeout),
+        '-S', str(args.driver.size_limit),
+        '-M', str(args.driver.max_mem),
+        '-s', args.driver.output_suffix,
+        docker_module_name, args.driver.function_name,
     ]
     logger.debug(f"Running: {' '.join(cmd)}")
     result = None
@@ -347,7 +347,7 @@ def generate_docker(module_path, worker_dir, args):
             ),
             module_path = module_path,
             result_type = GenResult.RunError,
-            function_name = args.function_name,
+            function_name = args.driver.function_name,
             args = args,
         )
     # Remove the module from the output directory
@@ -369,73 +369,82 @@ def generate_docker(module_path, worker_dir, args):
             error = None,
             data = None,
             module_path = module_path,
-            result_type = GenResult.UnknownErr,
-            function_name = args.function_name,
+            result_type = GenResult.NoLogErr,
+            function_name = args.driver.function_name,
             args = args,
         )
     if len(gen_results) == 1 and gen_results[0]['result_type'] == 'ImportError':
         return gen_results
 
-    if len(gen_results) != args.num_iterations:
+    if len(gen_results) != args.driver.num_iterations:
         if result is None:
             result = Result(
                 error = None,
                 data = None,
                 module_path = module_path,
                 result_type = GenResult.UnknownErr,
-                function_name = args.function_name,
+                function_name = args.driver.function_name,
                 args = args,
             )
         # Fill in the remaining entries with the error
-        for _ in range(args.num_iterations - len(gen_results)):
+        for _ in range(args.driver.num_iterations - len(gen_results)):
             gen_results.append(json.loads(result.json()))
     return gen_results
 
-def main():
-    parser = argparse.ArgumentParser('drive_all.py',
-        'Run a function in each module')
-    parser.add_argument(
-        'function_name', type=str,
-        help='The function to run in each module',
+def make_parser():
+    parser = argparse.ArgumentParser(
+        description='Create outputs using generated programs'
     )
-    parser.add_argument(
-        'module_count', type=int,
-        help='Number of modules expected (names on stdin)',
-    )
-    # These are passed to every module
-    parser.add_argument(
-        '-t', '--timeout', type=int, default=10,
-        help='Timeout for each function run (in seconds)',
-    )
-    parser.add_argument(
-        '-S', '--size-limit', type=int, default=50*1024*1024,
-        help='Maximum size of the output file (in bytes)')
-    parser.add_argument(
-        '-M', '--max-mem', type=int, default=1024*1024*1024,
-        help='Maximum memory usage (in bytes)',
-    )
+    # Global options
     parser.add_argument(
         '-O', '--output-dir', type=str, default='.',
         help='Output directory')
     parser.add_argument(
-        '-s', '--output-suffix', type=str, default='.gif',
-    )
-    # Global options
-    parser.add_argument(
         '-j', '--jobs', type=int, default=None,
-        help='Maximum number of jobs to run in parallel',
-    )
-    parser.add_argument(
-        '-n', '--num_iterations', type=int, default=100,
-        help='Number of times to run each function in each module',
+        help='Maximum number of jobs to run in parallel; None means ncpu',
     )
     parser.add_argument('--raise-errors', action='store_true',
                         help="Don't catch exceptions in the main driver loop")
     parser.add_argument('-L', '--logfile', type=str, default=None,
                         help='Log file for JSON results')
-    parser.add_argument('--stats-only', action=filestats_action)
-    args = parser.parse_args()
+    parser.add_argument('--stats-only', action=filestats_action,
+                        default=argparse.SUPPRESS,
+                        help='Only compute stats for the given log file')
+    # These are passed to every module
+    parser.add_argument(
+        '-f', '--driver.function_name', type=str,
+        help='The function to run in each module',
+    )
+    parser.add_argument(
+        '-t', '--driver.timeout', type=int, default=10,
+        help='Timeout for each function run (in seconds)',
+    )
+    parser.add_argument(
+        '-S', '--driver.size-limit', type=int, default=50*1024*1024,
+        help='Maximum size of the output file (in bytes)')
+    parser.add_argument(
+        '-M', '--driver.max-mem', type=int, default=1024*1024*1024,
+        help='Maximum memory usage (in bytes)',
+    )
+    parser.add_argument(
+        '-s', '--driver.output-suffix', type=str, default='.gif',
+        help='Suffix for output files',
+    )
+    parser.add_argument(
+        '-n', '--driver.num_iterations', type=int, default=100,
+        help='Number of times to run each function in each module (i.e., number of outputs to generate)',
+    )
+    return parser
 
+def init_parser(elm):
+    elm.subgroup_help['driver'] = 'Options for the generator; will be passed to each module'
+
+def main():
+    from elmconfig import ELMFuzzConfig
+    parser = make_parser()
+    config = ELMFuzzConfig(parents={'genoutputs': parser})
+    init_parser(config)
+    args = config.parse_args()
     logger.setLevel(logging.INFO)
 
     if args.logfile is not None:
@@ -443,10 +452,18 @@ def main():
     else:
         output_log = sys.stdout
 
-    print(json.dumps({'error': None, 'data': {'args': args.__dict__}}), file=output_log)
+    # Record the arguments we're using in the log
+    print(json.dumps(
+        {'error': None, 'data': {'args': args.__dict__}},
+        default=lambda x: x.__dict__ if hasattr(x, '__dict__') else str(x),
+    ), file=output_log)
+
+    # The first line sent by genvariants is the number of modules it will produce
+    module_count = int(sys.stdin.readline())
+
     # Call generate_all on each module in args.module_paths in parallel
     with ProcessPoolExecutor(max_workers=args.jobs) as executor:
-        progress = tqdm(total=args.module_count,
+        progress = tqdm(total=module_count,
                         desc="Generating", unit="mod")
         futures_to_paths = OrderedDict()
         for module_path in sys.stdin:
@@ -474,7 +491,7 @@ def main():
                     data = None,
                     module_path = module_path,
                     result_type = GenResult.Error,
-                    function_name = args.function_name,
+                    function_name = args.driver.function_name,
                 )
                 print(json.dumps({
                     'error': ExceptionInfo.from_exception(e, module_path),

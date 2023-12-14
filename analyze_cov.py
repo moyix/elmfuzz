@@ -57,7 +57,7 @@ def main():
             plt.scatter([x[0] for x in data], [x[3] for x in data])
             plt.title(f'Variant coverage by generation, {rundir}')
             plt.xlabel('Generation')
-            plt.ylabel('Coverage')
+            plt.ylabel('Edges')
             plt.show()
         else:
             for gen, model, generator, cov in data:
@@ -69,7 +69,7 @@ def main():
             plt.plot([x[0] for x in data], [x[1] for x in data])
             plt.title(f'Cumulative coverage by generation, {rundir}')
             plt.xlabel('Generation')
-            plt.ylabel('Coverage')
+            plt.ylabel('Edges')
             plt.show()
         else:
             for gen, cumulative in data:

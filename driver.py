@@ -47,6 +47,7 @@ class GenResult(str,Enum):
     Error       = "Error"
     RunError    = "RunError"
     UnknownErr  = "UnknownErr"
+    NoLogErr    = "NoLogErr"
 
 class ResultInfo(NamedTuple):
     time_taken: float
